@@ -148,7 +148,6 @@ public abstract class BlockTransmitter<TILE extends TileEntityTransmitter> exten
         VoxelShape shape = cachedShapes.get(packed);
         if (shape == null) {
             //If we don't have a cached version of our shape, then we need to calculate it
-            //size = Size.byIndexStatic(packed >> 12);
             List<VoxelShape> shapes = new ArrayList<>(EnumUtils.DIRECTIONS.length);
             for (Direction side : EnumUtils.DIRECTIONS) {
                 //Unpack the ordinal of the connection type (shift so that significant bits are the two rightmost

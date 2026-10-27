@@ -504,8 +504,6 @@ public class ClientRegistration {
     @SubscribeEvent
     public static void registerModelLoaders(ModelEvent.RegisterLoaders event) {
         event.register(EnergyCubeBaseLoader.ID, EnergyCubeBaseLoader.INSTANCE);
-        //event.register(Mekanism.rl("data_based"), DataBasedModelLoader.INSTANCE);
-        //event.register(Mekanism.rl("transmitter"), TransmitterLoader.INSTANCE);
     }
 
     @SubscribeEvent
