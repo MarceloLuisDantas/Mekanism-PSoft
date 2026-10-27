@@ -46,7 +46,6 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
@@ -124,7 +123,7 @@ public class ItemMekaTool extends ItemEnergized implements IRadialModuleContaine
     }
 
     public static int getDestroyEnergy(IModuleContainer container, float hardness, boolean silk) {
-        return getDestroyEnergy(getDestroyEnergy(container, silk), hardness);
+        return EnergyToolUtils.getDestroyEnergy(getDestroyEnergy(container, silk), hardness);
     }
 
     private static int getDestroyEnergy(IModuleContainer container, boolean silk) {
@@ -221,62 +220,34 @@ public class ItemMekaTool extends ItemEnergized implements IRadialModuleContaine
 
     @Override
     public float getDestroySpeed(ItemStack stack, BlockState state) {
-        EnergyHandler energyHandler = AutomatedEnergyHandler.manual(Capabilities.ENERGY.getCapability(ItemAccessUtils.sideEffectFreeAccess(stack)));
-        if (energyHandler == null) {
-            return 0;
-        }
-        //Protect against any mods that might be doing transactional logic, such as if an auto clicker validates it has enough energy before calling this method
-        try (Transaction simulation = TransactionHelper.openTransactionSafe()) {
-            //Use raw hardness to get the best guess of if it is zero or not
-            int energyRequired = getDestroyEnergy(stack, state.destroySpeed, isModuleEnabled(stack, MekanismModules.SILK_TOUCH_UNIT));
-            int energyAvailable = energyHandler.extract(energyRequired, simulation);
-            if (energyAvailable < energyRequired) {
-                //If we can't extract all the energy we need to break it go at base speed reduced by how much we actually have available
-                return MekanismConfig.gear.mekaToolBaseEfficiency.get() * ((float) energyAvailable / energyRequired);
-            }
-        }
-        IModule<ModuleExcavationEscalationUnit> module = getEnabledModule(stack, MekanismModules.EXCAVATION_ESCALATION_UNIT);
-        return module == null ? MekanismConfig.gear.mekaToolBaseEfficiency.get() : module.getCustomInstance().getEfficiency();
+        //Use raw hardness to get the best guess of if it is zero or not
+        int energyRequired = getDestroyEnergy(stack, state.destroySpeed, isModuleEnabled(stack, MekanismModules.SILK_TOUCH_UNIT));
+        return EnergyToolUtils.getDestroySpeed(stack, energyRequired, MekanismConfig.gear.mekaToolBaseEfficiency.get(), getEfficiency(stack));
     }
 
     @Override
     public boolean mineBlock(ItemStack stack, Level world, BlockState state, BlockPos pos, LivingEntity entity) {
-        EnergyHandler energyHandler = AutomatedEnergyHandler.manual(Capabilities.ENERGY.getCapability(ItemAccess.forStack(stack)));
-        if (energyHandler != null) {
-            boolean silk = isModuleEnabled(stack, MekanismModules.SILK_TOUCH_UNIT);
-            int modDestroyEnergy = getDestroyEnergy(stack, silk);
-            int energyRequired = getDestroyEnergy(modDestroyEnergy, state.getDestroySpeed(world, pos));
-            //Protect against any mods that might be doing transactional logic, such as if an auto clicker validates it has enough energy before calling this method
-            try (Transaction transaction = TransactionHelper.openTransactionSafe()) {
-                energyHandler.extract(energyRequired, transaction);
-                //AOE/vein mining handling
-                if (!world.isClientSide() && entity instanceof ServerPlayer player && MekanismUtils.isPlayingMode(player)) {
-                    boolean hasEnergyToVeinMine;
-                    try (Transaction simulation = Transaction.open(transaction)) {
-                        hasEnergyToVeinMine = energyHandler.extract(energyRequired, simulation) == energyRequired;
-                    }
-                    if (hasEnergyToVeinMine) {
-                        Map<BlockPos, BlockState> blocks = getBlastedBlocks(world, player, stack, pos, state);
-                        blocks = blocks.isEmpty() && ModuleVeinMiningUnit.canVeinBlock(state) ? Map.of(pos, state) : blocks;
+        boolean silk = isModuleEnabled(stack, MekanismModules.SILK_TOUCH_UNIT);
+        int modDestroyEnergy = getDestroyEnergy(stack, silk);
+        int energyRequired = EnergyToolUtils.getDestroyEnergy(modDestroyEnergy, state.getDestroySpeed(world, pos));
+        EnergyToolUtils.mineBlock(stack, world, entity, energyRequired, (energyHandler, player, transaction) -> {
+            Map<BlockPos, BlockState> blocks = getBlastedBlocks(world, player, stack, pos, state);
+            blocks = blocks.isEmpty() && ModuleVeinMiningUnit.canVeinBlock(state) ? Map.of(pos, state) : blocks;
 
-                        Reference2BooleanMap<Block> oreTracker = blocks.values().stream().collect(Collectors.toMap(BlockStateBase::getBlock,
-                              bs -> bs.is(MekanismTags.Blocks.ATOMIC_DISASSEMBLER_ORE), (l, _) -> l, Reference2BooleanArrayMap::new));
+            Reference2BooleanMap<Block> oreTracker = blocks.values().stream().collect(Collectors.toMap(BlockStateBase::getBlock,
+                  bs -> bs.is(MekanismTags.Blocks.ATOMIC_DISASSEMBLER_ORE), (l, _) -> l, Reference2BooleanArrayMap::new));
 
-                        Object2IntMap<BlockPos> veinedBlocks = getVeinedBlocks(world, stack, blocks, oreTracker);
-                        if (!veinedBlocks.isEmpty()) {
-                            //Don't include bonus energy required by efficiency modules when calculating energy of vein mining targets
-                            int baseDestroyEnergy = getDestroyEnergy(silk);
-                            MekanismUtils.veinMineArea(energyHandler, modDestroyEnergy, baseDestroyEnergy, (ServerLevel) world, pos, player, stack, this, veinedBlocks,
-                                  transaction, ItemMekaTool::getDestroyEnergy, (base, hardness, distance, bs) -> {
-                                      double multiplier = 0.5 * Math.pow(distance, bs.is(MekanismTags.Blocks.ATOMIC_DISASSEMBLER_ORE) ? 1.5 : 2);
-                                      return Mth.ceil(getDestroyEnergy(base, hardness) * multiplier);
-                                  });
-                        }
-                    }
-                }
-                transaction.commit();
+            Object2IntMap<BlockPos> veinedBlocks = getVeinedBlocks(world, stack, blocks, oreTracker);
+            if (!veinedBlocks.isEmpty()) {
+                //Don't include bonus energy required by efficiency modules when calculating energy of vein mining targets
+                int baseDestroyEnergy = getDestroyEnergy(silk);
+                MekanismUtils.veinMineArea(energyHandler, modDestroyEnergy, baseDestroyEnergy, (ServerLevel) world, pos, player, stack, this, veinedBlocks,
+                      transaction, EnergyToolUtils::getDestroyEnergy, (base, hardness, distance, bs) -> {
+                          double multiplier = 0.5 * Math.pow(distance, bs.is(MekanismTags.Blocks.ATOMIC_DISASSEMBLER_ORE) ? 1.5 : 2);
+                          return Mth.ceil(EnergyToolUtils.getDestroyEnergy(base, hardness) * multiplier);
+                      });
             }
-        }
+        });
         return true;
     }
 
@@ -288,19 +259,13 @@ public class ItemMekaTool extends ItemEnergized implements IRadialModuleContaine
             // if we don't have an enabled attack amplification unit
             int unitDamage = attackAmplificationUnit.getCustomInstance().getDamage();
             if (unitDamage > 0) {
-                EnergyHandler energyHandler = AutomatedEnergyHandler.manual(Capabilities.ENERGY.getCapability(ItemAccess.forStack(stack)));
-                if (energyHandler != null) {
-                    //Try to extract full energy, even if we have a lower damage amount this is fine as that just means
-                    // we don't have enough energy, but we will remove as much as we can, which is how much corresponds
-                    // to the amount of damage we will actually do
-                    //Protect against any mods that might be doing transactional logic, such as if an auto clicker validates it has enough energy before calling this method
-                    try (Transaction transaction = TransactionHelper.openTransactionSafe()) {
-                        energyHandler.extract(MathUtils.clampToInt(MekanismConfig.gear.mekaToolEnergyUsageWeapon.get() * (unitDamage / 4D)), transaction);
-                        transaction.commit();
-                    }
-                }
+                EnergyToolUtils.useAttackEnergy(stack, getAttackEnergyCost(unitDamage));
             }
         }
+    }
+
+    private static int getAttackEnergyCost(int unitDamage) {
+        return MathUtils.clampToInt(MekanismConfig.gear.mekaToolEnergyUsageWeapon.get() * (unitDamage / 4D));
     }
 
     @Override
@@ -332,18 +297,16 @@ public class ItemMekaTool extends ItemEnergized implements IRadialModuleContaine
     }
 
     public static int getDestroyEnergy(ItemStack itemStack, float hardness, boolean silk) {
-        return getDestroyEnergy(getDestroyEnergy(itemStack, silk), hardness);
-    }
-
-    private static int getDestroyEnergy(int baseDestroyEnergy, float hardness) {
-        return hardness == 0 ? Math.max(baseDestroyEnergy / 2, 1) : baseDestroyEnergy;
+        return EnergyToolUtils.getDestroyEnergy(getDestroyEnergy(itemStack, silk), hardness);
     }
 
     private static int getDestroyEnergy(ItemStack itemStack, boolean silk) {
-        int destroyEnergy = getDestroyEnergy(silk);
+        return MathUtils.clampToInt(getDestroyEnergy(silk) * getEfficiency(itemStack));
+    }
+
+    private static float getEfficiency(ItemStack itemStack) {
         IModule<ModuleExcavationEscalationUnit> module = IModuleHelper.INSTANCE.getIfEnabled(itemStack, MekanismModules.EXCAVATION_ESCALATION_UNIT);
-        float efficiency = module == null ? MekanismConfig.gear.mekaToolBaseEfficiency.get() : module.getCustomInstance().getEfficiency();
-        return MathUtils.clampToInt(destroyEnergy * efficiency);
+        return module == null ? MekanismConfig.gear.mekaToolBaseEfficiency.get() : module.getCustomInstance().getEfficiency();
     }
 
     @Override
@@ -355,15 +318,8 @@ public class ItemMekaTool extends ItemEnergized implements IRadialModuleContaine
         if (attackAmplificationUnit != null) {
             int unitDamage = attackAmplificationUnit.getCustomInstance().getDamage();
             if (unitDamage > 0) {
-                int energyCost = MathUtils.clampToInt(MekanismConfig.gear.mekaToolEnergyUsageWeapon.get() * (unitDamage / 4D));
-                EnergyHandler energyHandler = Capabilities.ENERGY.getCapability(ItemAccessUtils.sideEffectFreeAccess(stack));
-                int energy = energyHandler == null ? 0 : energyHandler.getAmountAsInt();
-                if (energy < energyCost) {
-                    //If we don't have enough power use it at a reduced power level (this will be false the majority of the time)
-                    damage += unitDamage * MathUtils.divideToLevel(energy, energyCost);
-                } else {
-                    damage += unitDamage;
-                }
+                //If we don't have enough power use it at a reduced power level (this will be false the majority of the time)
+                damage += unitDamage * EnergyToolUtils.getAttackEnergyLevel(stack, getAttackEnergyCost(unitDamage));
             }
         }
         //Retrieve a cached map if we have enough energy to attack at the full damage value based on configured damage
