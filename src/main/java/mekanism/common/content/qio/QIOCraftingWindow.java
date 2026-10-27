@@ -335,28 +335,7 @@ public class QIOCraftingWindow implements IContentsListener {
                 // update the contents of the output slot and the recipe that we are performing as
                 // if there is an NBT sensitive recipe, the output may have changed
                 recheckOutput = false;
-                RecipeHolder<CraftingRecipe> oldRecipe = lastRecipeJournal.recipe;
-                updateOutputSlot(world, transaction);
-                if (!Objects.equals(oldRecipe, lastRecipeJournal.recipe)) {
-                    //If the recipe changed, exit regardless of if the new recipe will produce the same output as the old one
-                    // as there is a good chance something odd is going on or potentially even the doLimitedCrafting GameRule
-                    // is enabled, and they only have access to one of the crafting recipes
-                    break;
-                }
-                ItemResource updatedOutput = outputSlot.resource();
-                if (updatedOutput.isEmpty() || !updatedOutput.is(resultItem)) {
-                    //If we can't craft anymore or the resulting item changed entirely, stop crafting
-                    break;
-                }
-                //If they may still be compatible, copy the stack, and apply the onCreated to it so that
-                // we can adjust the NBT if it needs adjusting
-                ItemStack potentialUpdatedOutput = updatedOutput.toStack(outputSlot.amountAsInt());
-                resultItem.onCraftedBy(potentialUpdatedOutput, player);
-                if (!ItemStack.matches(result, potentialUpdatedOutput)) {
-                    //If some data is different about the output, stop crafting
-                    // Note: we check if the stacks are equal instead of just if they can stack as if they are different sizes
-                    // for some reason we want to stop to allow the player to decide if they want to keep going, or stop crafting
-                    // This also has a side effect of not requiring us to then recalculate the value of maxToCraft
+                if (!isOutputUnchanged(world, player, result, resultItem, transaction)) {
                     break;
                 }
                 //We also need to make sure to update the remaining items as even though the recipe still outputs the same result
@@ -366,7 +345,6 @@ public class QIOCraftingWindow implements IContentsListener {
                 remaining = lastRecipeJournal.recipe.value().getRemainingItems(craftingInput.input());
             }
             try (Transaction subTransaction = Transaction.open(transaction)) {
-                boolean craftFailed = false;
                 //Try to insert into the hotbar and then the main inventory
                 int inserted = lastInsertTarget.tryInserting(hotBarSlots, mainInventorySlots, windowData, resultType, amountPerCraft, subTransaction);
                 if (inserted < amountPerCraft) {
@@ -376,64 +354,15 @@ public class QIOCraftingWindow implements IContentsListener {
                     // to top their inventory off on a specific item and may be confused or not notice if some contents ended up in their storage system instead
                     break;
                 }
-                //Update slots with remaining contents
-                for (int subIndex = 0, size = remaining.size(); subIndex < size; subIndex++) {
-                    ItemStack remainder = remaining.get(subIndex);
-                    int index = getIndexFromRemaining(craftingInput, subIndex);
-                    IInventorySlot inputSlot = inputSlots[index];
-                    if (inputSlot.amountAsLong() > 1) {
-                        //If the input slot contains an item that is stacked, reduce the size of it by one
-                        //Note: We "ignore" the fact that the container item may still be valid for the recipe, if the input is stacked
-                        if (inputSlot.extract(inputSlot.resource(), 1, subTransaction, AutomationType.MANUAL) == 0) {
-                            //If we couldn't actually extract the contents mark that it failed
-                            craftFailed = true;
-                            break;
-                        }
-                    } else if (inputSlot.amountAsLong() == 1) {
-                        //Else if the input slot only has a single item in it, try removing from the frequency
-                        if (frequency == null || remainderHelper.isStackStillValid(world, remainder, index)) {
-                            //If the remaining item is still valid for the recipe in that slot, or we don't have a frequency, and it is the
-                            // last stack in the slot, remove the stack from the slot
-                            if (inputSlot.extract(inputSlot.resource(), 1, subTransaction, AutomationType.MANUAL) == 0) {
-                                //If we couldn't actually extract the contents mark that it failed
-                                craftFailed = true;
-                                break;
-                            }
-                            // and mark that we should recheck our output as the recipe output may have changed, or we may
-                            // no longer have enough inputs to craft an output
-                            recheckOutput = true;
-                        } else {
-                            //Otherwise, try and remove the stack from the QIO frequency
-                            ItemResource current = inputSlot.resource();
-                            if (frequency.massExtract(current, 1, subTransaction) == 0) {
-                                //If we were not able to remove any from the frequency, remove it from the crafting grid
-                                if (inputSlot.extract(inputSlot.resource(), 1, subTransaction, AutomationType.MANUAL) == 0) {
-                                    // if we couldn't actually extract the contents mark that it failed
-                                    craftFailed = true;
-                                    break;
-                                }
-                                // see if we have another valid input stored in the frequency and replace it with it if we do
-                                replacementHelper.findEquivalentItem(world, contextMap, frequency, inputSlot, index, current, subTransaction);
-                                // and stop crafting even if we have another valid item for that spot, as we want to give the player a chance
-                                // to notice the item it will be using changed in case it got replaced with some very expensive alternative
-                                stopCrafting = true;
-                            }
-                        }
-                    } else if (!remainder.isEmpty()) {
-                        //Otherwise, if the slot is empty, but we don't have an empty remaining stack because of a mod doing odd things
-                        // or having some edge case behavior that creates items in a slot, mark that we need to recheck our output.
-                        // Technically we maybe would fail to add the item to the slot, but given that is highly unlikely we just
-                        // recheck anyway
-                        recheckOutput = true;
-                    }
-                    addRemainingItem(player, frequency, inputSlot, remainder, subTransaction);
-                }
-                if (craftFailed) {
+                ConsumeResult consumeResult = consumeIngredients(player, world, contextMap, frequency, craftingInput, remaining, subTransaction);
+                if (consumeResult == ConsumeResult.FAILED) {
                     //Roll back the last craft, and exit marking whatever we have successfully crafted as crafted
                     break;
                 }
                 //Commit this iteration of the craft
                 subTransaction.commit();
+                stopCrafting = consumeResult == ConsumeResult.STOP_CRAFTING;
+                recheckOutput = consumeResult == ConsumeResult.RECHECK_OUTPUT;
             }
         }
         if (crafted > 0) {
@@ -446,6 +375,96 @@ public class QIOCraftingWindow implements IContentsListener {
         }
         //Mark that we are done crafting
         CommonHooks.setCraftingPlayer(null);
+    }
+
+    /// Updates the output slot and checks if crafting again would still produce exactly the same result.
+    ///
+    /// @return `true` if the recipe and the result did not change, and we can keep crafting.
+    private boolean isOutputUnchanged(Level world, Player player, ItemStack result, Item resultItem, TransactionContext transaction) {
+        RecipeHolder<CraftingRecipe> oldRecipe = lastRecipeJournal.recipe;
+        updateOutputSlot(world, transaction);
+        if (!Objects.equals(oldRecipe, lastRecipeJournal.recipe)) {
+            //If the recipe changed, exit regardless of if the new recipe will produce the same output as the old one
+            // as there is a good chance something odd is going on or potentially even the doLimitedCrafting GameRule
+            // is enabled, and they only have access to one of the crafting recipes
+            return false;
+        }
+        ItemResource updatedOutput = outputSlot.resource();
+        if (updatedOutput.isEmpty() || !updatedOutput.is(resultItem)) {
+            //If we can't craft anymore or the resulting item changed entirely, stop crafting
+            return false;
+        }
+        //If they may still be compatible, copy the stack, and apply the onCreated to it so that
+        // we can adjust the NBT if it needs adjusting
+        ItemStack potentialUpdatedOutput = updatedOutput.toStack(outputSlot.amountAsInt());
+        resultItem.onCraftedBy(potentialUpdatedOutput, player);
+        //If some data is different about the output, stop crafting
+        // Note: we check if the stacks are equal instead of just if they can stack as if they are different sizes
+        // for some reason we want to stop to allow the player to decide if they want to keep going, or stop crafting
+        // This also has a side effect of not requiring us to then recalculate the value of maxToCraft
+        return ItemStack.matches(result, potentialUpdatedOutput);
+    }
+
+    /// Removes one of each ingredient used by a single craft, and puts the remaining items back.
+    ///
+    /// @return The outcome of consuming the ingredients, any changes should be rolled back by the caller if this returns [ConsumeResult#FAILED].
+    private ConsumeResult consumeIngredients(Player player, Level world, ContextMap contextMap, @Nullable QIOFrequency frequency, CraftingInput.Positioned craftingInput,
+          NonNullList<ItemStack> remaining, TransactionContext transaction) {
+        boolean recheckOutput = false;
+        boolean stopCrafting = false;
+        //Update slots with remaining contents
+        for (int subIndex = 0, size = remaining.size(); subIndex < size; subIndex++) {
+            ItemStack remainder = remaining.get(subIndex);
+            int index = getIndexFromRemaining(craftingInput, subIndex);
+            IInventorySlot inputSlot = inputSlots[index];
+            if (inputSlot.amountAsLong() > 1) {
+                //If the input slot contains an item that is stacked, reduce the size of it by one
+                //Note: We "ignore" the fact that the container item may still be valid for the recipe, if the input is stacked
+                if (inputSlot.extract(inputSlot.resource(), 1, transaction, AutomationType.MANUAL) == 0) {
+                    //If we couldn't actually extract the contents mark that it failed
+                    return ConsumeResult.FAILED;
+                }
+            } else if (inputSlot.amountAsLong() == 1) {
+                //Else if the input slot only has a single item in it, try removing from the frequency
+                if (frequency == null || remainderHelper.isStackStillValid(world, remainder, index)) {
+                    //If the remaining item is still valid for the recipe in that slot, or we don't have a frequency, and it is the
+                    // last stack in the slot, remove the stack from the slot
+                    if (inputSlot.extract(inputSlot.resource(), 1, transaction, AutomationType.MANUAL) == 0) {
+                        //If we couldn't actually extract the contents mark that it failed
+                        return ConsumeResult.FAILED;
+                    }
+                    // and mark that we should recheck our output as the recipe output may have changed, or we may
+                    // no longer have enough inputs to craft an output
+                    recheckOutput = true;
+                } else {
+                    //Otherwise, try and remove the stack from the QIO frequency
+                    ItemResource current = inputSlot.resource();
+                    if (frequency.massExtract(current, 1, transaction) == 0) {
+                        //If we were not able to remove any from the frequency, remove it from the crafting grid
+                        if (inputSlot.extract(inputSlot.resource(), 1, transaction, AutomationType.MANUAL) == 0) {
+                            // if we couldn't actually extract the contents mark that it failed
+                            return ConsumeResult.FAILED;
+                        }
+                        // see if we have another valid input stored in the frequency and replace it with it if we do
+                        replacementHelper.findEquivalentItem(world, contextMap, frequency, inputSlot, index, current, transaction);
+                        // and stop crafting even if we have another valid item for that spot, as we want to give the player a chance
+                        // to notice the item it will be using changed in case it got replaced with some very expensive alternative
+                        stopCrafting = true;
+                    }
+                }
+            } else if (!remainder.isEmpty()) {
+                //Otherwise, if the slot is empty, but we don't have an empty remaining stack because of a mod doing odd things
+                // or having some edge case behavior that creates items in a slot, mark that we need to recheck our output.
+                // Technically we maybe would fail to add the item to the slot, but given that is highly unlikely we just
+                // recheck anyway
+                recheckOutput = true;
+            }
+            addRemainingItem(player, frequency, inputSlot, remainder, transaction);
+        }
+        if (stopCrafting) {
+            return ConsumeResult.STOP_CRAFTING;
+        }
+        return recheckOutput ? ConsumeResult.RECHECK_OUTPUT : ConsumeResult.SUCCESS;
     }
 
     private static int getIndexFromRemaining(CraftingInput.Positioned craftingInput, int subIndex) {
@@ -486,43 +505,10 @@ public class QIOCraftingWindow implements IContentsListener {
         try (Transaction transaction = Transaction.openRoot()) {
             remainderHelper.reset();
             replacementHelper.reset();
-            //Update slots with remaining contents
-            for (int subIndex = 0, size = remaining.size(); subIndex < size; subIndex++) {
-                ItemStack remainder = remaining.get(subIndex);
-                int index = getIndexFromRemaining(craftingInput, subIndex);
-                IInventorySlot inputSlot = inputSlots[index];
-                if (inputSlot.amountAsLong() > 1) {
-                    //If the input slot contains an item that is stacked, reduce the size of it by one
-                    //Note: We "ignore" the fact that the container item may still be valid for the recipe, if the input is stacked
-                    if (inputSlot.extract(inputSlot.resource(), 1, transaction, AutomationType.MANUAL) == 0) {
-                        //Failed to extract the item from the slot, bail and return nothing was crafted
-                        return ItemStack.EMPTY;
-                    }
-                } else if (inputSlot.amountAsLong() == 1) {
-                    //Else if the input slot only has a single item in it, try removing from the frequency
-                    if (frequency == null || remainderHelper.isStackStillValid(world, remainder, index)) {
-                        //If we have no frequency or the remaining item is still valid for the recipe in that slot,
-                        // remove from the crafting window
-                        if (inputSlot.extract(inputSlot.resource(), 1, transaction, AutomationType.MANUAL) == 0) {
-                            //Failed to extract the item from the slot, bail and return nothing was crafted
-                            return ItemStack.EMPTY;
-                        }
-                    } else {
-                        //Otherwise, try and remove the stack from the QIO frequency
-                        ItemResource current = inputSlot.resource();
-                        if (frequency.massExtract(current, 1, transaction) == 0) {
-                            //If we were not able to remove any from the frequency, remove it from the crafting grid
-                            if (inputSlot.extract(inputSlot.resource(), 1, transaction, AutomationType.MANUAL) == 0) {
-                                //Failed to extract the item from the slot, bail and return nothing was crafted
-                                return ItemStack.EMPTY;
-                            }
-                            // see if we have another valid input stored in the frequency and replace it with it if we do
-                            replacementHelper.findEquivalentItem(world, contextMap, frequency, inputSlot, index, current, transaction);
-                        }
-                    }
-                }
-                //Note: No special handling needed here for if the remainder is empty
-                addRemainingItem(player, frequency, inputSlot, remainder, transaction);
+            //Note: As this is a single craft, we don't care about whether the output needs to be rechecked or if we should stop crafting
+            if (consumeIngredients(player, world, contextMap, frequency, craftingInput, remaining, transaction) == ConsumeResult.FAILED) {
+                //Failed to extract an item from a slot, bail and return nothing was crafted
+                return ItemStack.EMPTY;
             }
             //Mark that we are done crafting
             CommonHooks.setCraftingPlayer(null);
@@ -573,6 +559,17 @@ public class QIOCraftingWindow implements IContentsListener {
                 playerInv.drop(itemType, toInsert, false, false, transaction);
             }
         }
+    }
+
+    private enum ConsumeResult {
+        /// All ingredients were consumed, and the same craft can be performed again
+        SUCCESS,
+        /// All ingredients were consumed, but the inputs changed in a way that the output of the recipe needs to be rechecked
+        RECHECK_OUTPUT,
+        /// All ingredients were consumed, but an ingredient got replaced so crafting should stop to give the player a chance to notice it
+        STOP_CRAFTING,
+        /// Not all ingredients could be consumed
+        FAILED
     }
 
     /// Used for helping keep track of were we were for inserting
