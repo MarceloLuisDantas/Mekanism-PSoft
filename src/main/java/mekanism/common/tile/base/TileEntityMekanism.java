@@ -596,8 +596,6 @@ public abstract class TileEntityMekanism extends CapabilityTileEntity implements
             tile.updateSound(level);
         }
         tile.onUpdateClient(level);
-        //None of our impls currently care about the ticker in their onUpdateClient methods
-        //tile.ticker++;
     }
 
     public static void tickServer(Level level, BlockPos pos, BlockState state, TileEntityMekanism tile) {

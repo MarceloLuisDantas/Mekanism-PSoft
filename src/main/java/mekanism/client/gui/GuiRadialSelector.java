@@ -249,7 +249,6 @@ public class GuiRadialSelector extends Screen {
     @Override
     public void extractTransparentBackground(GuiGraphicsExtractor graphics) {
         //NO-OP, ensure the background isn't blurred
-        //graphics.fillGradient(0, 0, this.width, this.height, 0xc0101010, 0xd0101010);
     }
 
     @Nullable

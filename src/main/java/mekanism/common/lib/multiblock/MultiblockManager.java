@@ -29,8 +29,6 @@ import org.jspecify.annotations.Nullable;
 @EventBusSubscriber(modid = Mekanism.MODID)
 public class MultiblockManager<T extends MultiblockData> implements ValueIOSerializable {
 
-    //private static final Set<MultiblockManager<?>> managers = new HashSet<>();
-
     private final MultiblockType<T> multiblockType;
 
     /// A map containing references to all multiblock inventory caches.
@@ -40,7 +38,6 @@ public class MultiblockManager<T extends MultiblockData> implements ValueIOSeria
 
     public MultiblockManager(MultiblockType<T> multiblockType) {
         this.multiblockType = multiblockType;
-        //managers.add(this);
     }
 
     public MultiblockType<T> getMultiblockType() {
@@ -50,7 +47,6 @@ public class MultiblockManager<T extends MultiblockData> implements ValueIOSeria
     /// Adds a cache as tracked and marks the manager as dirty.
     public void trackCache(UUID id, MultiblockCache<T> cache) {
         caches.put(id, cache);
-        //markDirty();
     }
 
     @Nullable
@@ -90,8 +86,6 @@ public class MultiblockManager<T extends MultiblockData> implements ValueIOSeria
                     cache.sync(multiblock, transaction);
                     transaction.commit();
                 }
-                //If the multiblock is dirty mark the manager's data handler as dirty to ensure that we save
-                //markDirty();
                 // next we can reset the dirty state of the multiblock
                 multiblock.resetDirty();
             }
@@ -108,10 +102,6 @@ public class MultiblockManager<T extends MultiblockData> implements ValueIOSeria
     public UUID getUniqueInventoryID() {
         return UUID.randomUUID();
     }
-
-    //no longer relevant, attachement data is always saved
-    //private void markDirty() {
-    //}
 
     public static <T extends MultiblockData> MultiblockManager<T> get(Level level, MultiblockType<T> type) {
         return level.getData(type.attachment());

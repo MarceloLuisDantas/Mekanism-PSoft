@@ -457,7 +457,6 @@ public class TileEntityTeleporter extends TileEntityMekanism implements IChunkLo
             }
             return entity;
         }
-        //player.connection.teleport(player.getX(), player.getY(), player.getZ(), yaw, player.getXRot());
         return entity.teleport(new TeleportTransition((ServerLevel) targetWorld, destination, entity.getDeltaMovement(), yRot, entity.getXRot(), transition));
     }
 

@@ -515,7 +515,6 @@ public class MekanismDataComponents {
             } else {
                 boolean isGaugeDropper = stack.is(MekanismItems.GAUGE_DROPPER);
                 if (isGaugeDropper && !chemicals.hasNonEmptyContents()) {
-                    //builder.accept(MekanismLang.EMPTY.translateColored(EnumColor.DARK_RED));
                     AttachedResources<FluidResource> fluids = stack.get(ATTACHED_FLUIDS);
                     if (fluids != null && !fluids.hasNonEmptyContents()) {
                         //If there is no chemical nor fluid, render that the gauge dropper is empty

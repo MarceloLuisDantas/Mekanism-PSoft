@@ -443,7 +443,6 @@ public class QIOCraftingWindow implements IContentsListener {
             // stack or more importantly the input inventory during crafting
             //TODO: If this ends up causing major issues with some weird way another mod ends up doing crafting
             // we can evaluate how we want to handle it then/try to integrate support for firing it.
-            //BasicEventHooks.firePlayerCraftingEvent(player, result, craftingInventory);
         }
         //Mark that we are done crafting
         CommonHooks.setCraftingPlayer(null);
@@ -483,7 +482,6 @@ public class QIOCraftingWindow implements IContentsListener {
         // stack or more importantly the input inventory during crafting
         //TODO: If this ends up causing major issues with some weird way another mod ends up doing crafting
         // we can evaluate how we want to handle it then/try to integrate support for firing it.
-        //BasicEventHooks.firePlayerCraftingEvent(player, result, craftingInventory);
         NonNullList<ItemStack> remaining = lastRecipeJournal.recipe.value().getRemainingItems(craftingInput.input());
         try (Transaction transaction = Transaction.openRoot()) {
             remainderHelper.reset();

@@ -38,13 +38,11 @@ public abstract class BaseAdvancementProvider extends AdvancementSubProvider {
 
     @SafeVarargs
     public static Criterion<InventoryChangeTrigger.TriggerInstance> hasAllItems(Holder<Item>... items) {
-        //return InventoryChangeTrigger.TriggerInstance.hasItems(items);
         return hasItems(Arrays.stream(items).map(BaseAdvancementProvider::predicate).toArray(ItemPredicate[]::new));
     }
 
     @SafeVarargs
     protected static ItemPredicate predicate(Holder<Item>... items) {
-        //return ItemPredicate.Builder.item().of(items).build();
         return new ItemPredicate(Optional.of(HolderSet.direct(items)), MinMaxBounds.Ints.ANY, DataComponentMatchers.ANY);
     }
 
