@@ -45,8 +45,6 @@ public class AdditionsModelProvider extends BaseModelProvider {
     @Override
     protected void registerModels(BlockModelGenerators blockModels, ItemModelGenerators itemModels) {
 
-        //Identifier balloonModelLoc = modLocation("item/balloon");
-        //ModelTemplate balloonParent = new ModelTemplate(Optional.of(balloonModelLoc), Optional.empty());
         Identifier latchedBalloonLoc = modLocation("item/balloon_latched");
         Identifier guiBalloonLoc = modLocation("item/balloon_gui");
         Identifier fixedBalloonLoc = modLocation("item/balloon_fixed");

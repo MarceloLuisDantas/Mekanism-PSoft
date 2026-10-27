@@ -184,7 +184,6 @@ public class PersistingDisabledProvidersProvider implements DataProvider {
     private boolean shouldPersist(Set<String> compatRecipesToSkip, Path path) {
         //Get the string representation of the path and sanitize it
         String stringPath = path.toString().replace('\\', '/');
-        //Mekanism.logger.info("Evaluating path: {}", stringPath);
         if (pathsToSkip.stream().anyMatch(stringPath::contains)) {
             return true;
         }
@@ -192,7 +191,6 @@ public class PersistingDisabledProvidersProvider implements DataProvider {
         if (compatIndex != -1) {
             //Compat recipes
             String compatPath = stringPath.substring(compatIndex + "/recipe/compat/".length());
-            //Mekanism.logger.info("Evaluating compat path: {}", compatPath);
             return compatRecipesToSkip.stream().anyMatch(compatPath::startsWith);
         }
         return false;

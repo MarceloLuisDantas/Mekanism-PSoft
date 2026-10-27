@@ -398,9 +398,6 @@ public class FusionReactorMultiblockData extends MultiblockData {
             }
         }
 
-        //HeatTransfer heatTransfer = simulate(transaction);
-        //lastEnvironmentLoss = heatTransfer.environmentTransfer();
-        //lastTransferLoss = heatTransfer.adjacentTransfer();
         lastTransferLoss = simulateAdjacent(transaction) + lostToWater;
         lastEnvironmentLoss = 0;
 

@@ -32,7 +32,6 @@ public class ChunkUtils {
                 posZ = prevZ + dirZ;
             } else {
                 posX = prevX + dirX;
-                //posZ = prevZ;
             }
         } while (i < arrSize);
 

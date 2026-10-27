@@ -315,8 +315,6 @@ public class TileEntityFluidTank extends TileEntityMekanism implements IConfigur
     @Override
     public void writeReducedUpdatedTag(ValueOutput output) {
         super.writeReducedUpdatedTag(output);
-        //updateTag.put(SerializationConstants.FLUID, fluidTank.getFluid().saveOptional(provider));
-        //updateTag.put(SerializationConstants.VALVE, valveFluid.saveOptional(provider));
         output.putFloat(SerializationConstants.SCALE, prevScale);
         //TODO - 26.3: Re-evaluate this alternate encoding further (check history)
         ValueUtils.storeNonEmpty(output, SerializationConstants.FLUID, fluidTank);
@@ -328,8 +326,6 @@ public class TileEntityFluidTank extends TileEntityMekanism implements IConfigur
     @Override
     public void handleUpdateTag(ValueInput input) {
         super.handleUpdateTag(input);
-        //input.child(SerializationConstants.FLUID).ifPresent(fluidTank::deserialize);
-        //valveFluid = input.read(SerializationConstants.VALVE, FluidStack.OPTIONAL_CODEC).orElse(FluidStack.EMPTY);
         float scale = input.getFloatOr(SerializationConstants.SCALE, 0);
         if (lightUpdateDelay == 0 && MekanismUtils.scaleChanged(prevScale, scale)) {
             if (prevScale == 0 || scale == 0) {
